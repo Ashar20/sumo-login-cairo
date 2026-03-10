@@ -3,19 +3,23 @@ name = "sumo"
 version = "0.1.0"
 edition = "2024_07"
 
+[features]
+testing = []
+
 # See more keys and their definitions at https://docs.swmansion.com/scarb/docs/reference/manifest.html
 [scripts]
-test = "snforge test"
+test = "snforge test --features testing"
+# Without --features testing: uses prod STRK/ORACLE addresses (may conflict with snforge predeploy)
 
 [dependencies]
-garaga = { git = "https://github.com/keep-starknet-strange/garaga.git",tag="v0.13.3"}
+garaga = { path = "./vendor/garaga" }
 universal_ecip = { path = "./universal_ecip" }
 erc20 = { path = "./erc20" }
 oracle = { path = "./oracle" }
 starknet = "2.8.2"
 
 [dev-dependencies]
-snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry.git", tag = "v0.31.0" }
+snforge_std = "0.57.0"
 # snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry.git"}
 assert_macros = "2.8.4"
 

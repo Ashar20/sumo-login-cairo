@@ -44,7 +44,7 @@ fn call_deploy(login_address: ContractAddress, login_dispatcher : ILoginDispatch
     let zero = contract_address_const::<0>();
     start_cheat_caller_address(login_address, zero);
     let call: Call = Call{to:login_address, selector:selector!("deploy"),calldata:array![].span()};
-    login_dispatcher.__validate__(array![call].span());
+    login_dispatcher.__validate__(array![call]);
 }
 
 fn call_deploy_of_other(login_address: ContractAddress, login_dispatcher : ILoginDispatcher) {
@@ -52,14 +52,14 @@ fn call_deploy_of_other(login_address: ContractAddress, login_dispatcher : ILogi
     start_cheat_caller_address(login_address, zero);
     let other: felt252 = 12345;
     let call: Call = Call{to:other.try_into().unwrap(), selector:selector!("deploy"),calldata:array![].span()};
-    login_dispatcher.__validate__(array![call].span());
+    login_dispatcher.__validate__(array![call]);
 }
 
 fn call_login(login_address: ContractAddress, login_dispatcher : ILoginDispatcher) {
     let zero = contract_address_const::<0>();
     start_cheat_caller_address(login_address, zero);
     let call: Call = Call{to:login_address, selector:selector!("login"),calldata:array![].span()};
-    login_dispatcher.__validate__(array![call].span());
+    login_dispatcher.__validate__(array![call]);
 }
 
 
@@ -68,7 +68,7 @@ fn multicall_deploy(login_address: ContractAddress, login_dispatcher : ILoginDis
     start_cheat_caller_address(login_address, zero);
     let call_1: Call = Call{to:login_address, selector:selector!("deploy"),calldata:array![].span()};
     let call_2: Call = Call{to:login_address, selector:selector!("deploy"),calldata:array![].span()};
-    login_dispatcher.__validate__(array![call_1,call_2].span());
+    login_dispatcher.__validate__(array![call_1,call_2]);
 }
 
 
@@ -76,7 +76,7 @@ fn call_admin_entrypoint(login_address: ContractAddress, login_dispatcher : ILog
     let zero = contract_address_const::<0>();
     start_cheat_caller_address(login_address, zero);
     let call: Call = Call{to:login_address, selector:selector!("update_oauth_public_key"),calldata:array![].span()};
-    login_dispatcher.__validate__(array![call].span());
+    login_dispatcher.__validate__(array![call]);
 }
 
 
@@ -110,7 +110,7 @@ fn only_protocol() {
     start_cheat_transaction_hash(login_address , tx_hash);
     start_cheat_block_number(login_address , block_number);
     let call: Call = Call{to:login_address, selector:selector!("deploy"),calldata:array![].span()};
-    login_dispatcher.__validate__(array![call].span());
+    login_dispatcher.__validate__(array![call]);
 }
 
 
@@ -348,7 +348,7 @@ fn wrong_admin_selector() {
     start_cheat_caller_address(login_address, zero);
     let call_1: Call = Call{to:login_address, selector:selector!("update_oauth_public_key"),calldata:array![].span()};
     let call_2: Call = Call{to:login_address, selector:selector!("deploy"),calldata:array![].span()};
-    login_dispatcher.__validate__(array![call_1,call_2].span());
+    login_dispatcher.__validate__(array![call_1,call_2]);
 }
 
 #[test]

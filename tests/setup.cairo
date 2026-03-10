@@ -17,7 +17,8 @@ use snforge_std::{
 };
 
 
-const LOGIN_ADDRESS: felt252 = 0x75662cc8b986d55d709d58f698bbb47090e2474918343b010192f487e30c23f;
+// Avoid snforge predeployed address conflict (must fit felt252)
+const LOGIN_ADDRESS: felt252 = 0x033445566778899aabbccddeeff00033445566778899aabbccddeeff0003;
 const PKEY: felt252 = 0x6363cb464857bb5eddfa351b098bc10c155d61de554640a1f78df62891cd03f;
 
 fn declare_class(contract_name: ByteArray) -> (ContractClass, felt252) {
@@ -80,6 +81,8 @@ pub fn transfer(from: ContractAddress, to:ContractAddress, amount: u256) {
     stop_cheat_caller_address(STRK_ADDRESS.try_into().unwrap());
 }
 
+const ADMIN_ADDRESS: felt252 = 0x0445566778899aabbccddeeff000445566778899aabbccddeeff0004;
+
 pub fn setup_login() -> (ContractAddress,ILoginDispatcher) {
     setup_verifier();
     setup_erc20();
@@ -87,7 +90,9 @@ pub fn setup_login() -> (ContractAddress,ILoginDispatcher) {
 
     let (_account_contract, account_class_hash) = declare_class("Account");
     let (login_contract, _login_class_hash) = declare_class("Login");
-    let calldata = array![account_class_hash, PKEY];
+    // Login constructor: sumo_account_class_hash, public_key, delegation_registry, admin_address
+    let zero = 0_felt252;
+    let calldata = array![account_class_hash, PKEY, zero, ADMIN_ADDRESS];
     let login_address= deploy_login_account(login_contract, LOGIN_ADDRESS.try_into().unwrap(),calldata);
     let login_dispatcher = ILoginDispatcher {contract_address: login_address};
     (login_address,login_dispatcher)

@@ -4,6 +4,27 @@ use crate::utils::structs::{ Signature, StructForHash, StructForHashImpl };
 use crate::utils::constants::{ STRK_ADDRESS, MASK_250, ORACLE_ADDRESS };
 
 
+/// Verifies that the sha256 hash of the public inputs matches the Garaga output.
+/// Overload for sponsor flow where inputs come from calldata, not Signature.
+pub fn validate_all_inputs_hash_from_params(
+    eph_0: u256,
+    eph_1: u256,
+    address_seed: u256,
+    max_block: u256,
+    iss_b64_F: u256,
+    iss_index_in_payload_mod_4: u256,
+    header_F: u256,
+    modulus_F: u256,
+    all_inputs_hash: Span<u256>,
+) -> bool {
+    let inputs: Array<u256> = array![eph_0, eph_1, address_seed, max_block, iss_b64_F, iss_index_in_payload_mod_4, header_F, modulus_F];
+    let sha256_input = concatenate_inputs(inputs.span());
+    let hash_result = compute_sha256_byte_array(@sha256_input);
+    let left: u256 = *all_inputs_hash.at(0);
+    let right: u256 = (*hash_result.span().at(0)).into();
+    left == right
+}
+
 /// Verifies that the sha256 hash of the public inputs given in the signature is equal to the
 /// given one.
 pub fn validate_all_inputs_hash(signature : @Signature, all_inputs_hash: Span<u256>) -> bool {

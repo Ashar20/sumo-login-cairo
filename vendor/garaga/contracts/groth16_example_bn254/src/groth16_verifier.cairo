@@ -1,29 +1,24 @@
 use super::groth16_verifier_constants::{N_PUBLIC_INPUTS, vk, ic, precomputed_lines};
-// use garaga::groth16::Groth16Proof;
 
 #[starknet::interface]
 trait IGroth16VerifierBN254<TContractState> {
     fn verify_groth16_proof_bn254(
         ref self: TContractState, full_proof_with_hints: Span<felt252>,
-    ) -> (bool, Span<u256>);
+    ) -> bool;
 }
 
 #[starknet::contract]
 mod Groth16VerifierBN254 {
-    use starknet::{ SyscallResultTrait , ContractAddress };
-    use garaga::definitions::{ G1Point , G1G2Pair };
-    use garaga::groth16::{ multi_pairing_check_bn254_3P_2F_with_extra_miller_loop_result };
-    use garaga::ec_ops::{ G1PointTrait , G2PointTrait , ec_safe_add };
-    use garaga::utils::calldata::{ deserialize_full_proof_with_hints_bn254 };
-    use super::{ N_PUBLIC_INPUTS, vk, ic, precomputed_lines };
-   //use super::Groth16Proof;
+    use starknet::SyscallResultTrait;
+    use garaga::definitions::{G1Point, G1G2Pair};
+    use garaga::groth16::{multi_pairing_check_bn254_3P_2F_with_extra_miller_loop_result};
+    use garaga::ec_ops::{G1PointTrait, G2PointTrait, ec_safe_add};
+    use garaga::utils::calldata::{deserialize_full_proof_with_hints_bn254};
+    use super::{N_PUBLIC_INPUTS, vk, ic, precomputed_lines};
 
-    // Production: deployed ECIP. Testing: use class hash from local UniversalECIP build.
-    #[cfg(feature: "testing")]
-    const ECIP_OPS_CLASS_HASH: felt252 = 0x05fc19ccc7c8aba1cfa7c0d2d003e69ee4eb8e1d170eae72043b2aa7662b4984;
-    #[cfg(not(feature: "testing"))]
-    const ECIP_OPS_CLASS_HASH: felt252 = 0x04ca4fb1385c242094baf5d182d3f21b1123c22395e5e7f5c74514faa2df8bb8;
-//        0x7918f484291eb154e13d0e43ba6403e62dc1f5fbb3a191d868e2e37359f8713;
+    const ECIP_OPS_CLASS_HASH: felt252 =
+        0x7918f484291eb154e13d0e43ba6403e62dc1f5fbb3a191d868e2e37359f8713;
+    use starknet::ContractAddress;
 
     #[storage]
     struct Storage {}
@@ -32,7 +27,7 @@ mod Groth16VerifierBN254 {
     impl IGroth16VerifierBN254 of super::IGroth16VerifierBN254<ContractState> {
         fn verify_groth16_proof_bn254(
             ref self: ContractState, full_proof_with_hints: Span<felt252>,
-        ) -> (bool, Span<u256>) {
+        ) -> bool {
             // DO NOT EDIT THIS FUNCTION UNLESS YOU KNOW WHAT YOU ARE DOING.
             // ONLY EDIT THE process_public_inputs FUNCTION BELOW.
             let fph = deserialize_full_proof_with_hints_bn254(full_proof_with_hints);
@@ -40,8 +35,6 @@ mod Groth16VerifierBN254 {
             let mpcheck_hint = fph.mpcheck_hint;
             let small_Q = fph.small_Q;
             let msm_hint = fph.msm_hint;
-            let vk = vk();
-            let precomputed_lines_arr = precomputed_lines();
 
             groth16_proof.a.assert_on_curve(0);
             groth16_proof.b.assert_on_curve(0);
@@ -81,7 +74,7 @@ mod Groth16VerifierBN254 {
                 G1G2Pair { p: groth16_proof.c, q: vk.delta_g2 },
                 G1G2Pair { p: groth16_proof.a.negate(0), q: groth16_proof.b },
                 vk.alpha_beta_miller_loop_result,
-                precomputed_lines_arr.span(),
+                precomputed_lines.span(),
                 mpcheck_hint,
                 small_Q
             );
@@ -90,9 +83,9 @@ mod Groth16VerifierBN254 {
                     .process_public_inputs(
                         starknet::get_caller_address(), groth16_proof.public_inputs
                     );
-                return (true, groth16_proof.public_inputs);
+                return true;
             } else {
-                return (false, groth16_proof.public_inputs);
+                return false;
             }
         }
     }

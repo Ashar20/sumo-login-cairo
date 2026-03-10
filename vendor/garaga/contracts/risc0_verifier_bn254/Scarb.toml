@@ -1,13 +1,11 @@
 [package]
-name = "universal_ecip"
+name = "risc0_bn254_verifier"
 version = "0.1.0"
 edition = "2024_07"
 
 [dependencies]
-garaga = { path = "../vendor/garaga" }
+garaga = { path = "../../" }
 starknet = "2.8.2"
-
-[lib]
 
 [cairo]
 sierra-replace-ids = false

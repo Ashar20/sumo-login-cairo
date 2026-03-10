@@ -3,14 +3,49 @@ use core::starknet::{ ContractAddress , account::Call };
 #[starknet::interface]
 pub trait ILogin<TContractState> {
     fn is_valid_signature(self: @TContractState, msg_hash: felt252, signature: Array<felt252>) -> felt252;
-    fn __validate__(self: @TContractState, calls: Span<Call>) -> felt252 ;
-    fn __execute__(ref self: TContractState, calls: Span<Call>) -> Array<Span<felt252>> ;
+    fn __validate__(self: @TContractState, calls: Array<Call>) -> felt252 ;
+    fn __execute__(ref self: TContractState, calls: Array<Call>) -> Array<Span<felt252>> ;
     fn __validate_declare__(ref self: TContractState, declared_class_hash: felt252) -> felt252;
 
     fn is_sumo_user(self: @TContractState, user_address: ContractAddress) -> bool;
     fn update_oauth_public_key(ref self: TContractState);
     fn get_user_debt(self: @TContractState, user_address: ContractAddress) -> u128;
     fn collect_debt(ref self: TContractState, user_address: ContractAddress);
+
+    /// Admin-only: set sponsor address. Callable by admin_address (e.g. deployer).
+    fn set_sponsor(ref self: TContractState, sponsor: ContractAddress);
+
+    /// Sponsor-only: deploy account with proof as calldata (ashcrypto03-compatible flow).
+    fn deploy_account_sponsor(
+        ref self: TContractState,
+        proof: Array<felt252>,
+        eph_public_key0: u256,
+        eph_public_key1: u256,
+        address_seed: u256,
+        max_block: u256,
+        iss_b64_F: u256,
+        iss_index_in_payload_mod_4: u256,
+        header_F: u256,
+        modulus_F: u256,
+        session_pubkey: felt252,
+        session_expiry: u64,
+    ) -> ContractAddress;
+
+    /// Sponsor-only: login/rotate key for existing user.
+    fn login_sponsor(
+        ref self: TContractState,
+        proof: Array<felt252>,
+        eph_public_key0: u256,
+        eph_public_key1: u256,
+        address_seed: u256,
+        max_block: u256,
+        iss_b64_F: u256,
+        iss_index_in_payload_mod_4: u256,
+        header_F: u256,
+        modulus_F: u256,
+        session_pubkey: felt252,
+        session_expiry: u64,
+    );
 
     //user entrypoint
     fn deploy(ref self: TContractState) -> ContractAddress ;
@@ -37,6 +72,7 @@ pub mod Login {
     };
     use crate::utils::utils::{
         validate_all_inputs_hash,
+        validate_all_inputs_hash_from_params,
         mask_address_seed,
         precompute_account_address,
         oracle_check,
@@ -48,7 +84,7 @@ pub mod Login {
         structs::StructForHashImpl,
         structs::PublicInputImpl,
         structs::Signature,
-        constants::TWO_POWER_128,
+        constants::{TWO_POWER_128, ZERO_ADDRESS},
         constants::LOGIN_FEE_GAS,
         constants::DEPLOY_FEE_GAS,
         constants::GARAGA_VERIFY_CLASSHASH,
@@ -62,6 +98,12 @@ pub mod Login {
     struct Storage {
         public_key: felt252,
         sumo_account_class_hash: felt252,
+        /// If non-zero, deployed accounts (DelegatedAccount) get this registry via set_registry() after deploy.
+        delegation_registry: ContractAddress,
+        /// If non-zero, this address can call deploy_account_sponsor / login_sponsor (ashcrypto03 flow).
+        sponsor_address: ContractAddress,
+        /// Address allowed to call set_sponsor (e.g. deployer). Enables starkli invoke without custom signature.
+        admin_address: ContractAddress,
         user_debt: Map<ContractAddress, u128>,
         user_list: Map<ContractAddress, bool>,
         oauth_modulus_F: u256,
@@ -101,11 +143,22 @@ pub mod Login {
     /// Initializes this contract.
     ///
     /// The deployer has to provide:
-    /// - The class hash of the sumo Account contract.
+    /// - The class hash of the sumo Account contract (e.g. DelegatedAccount).
     /// - The public key of this account.
-    fn constructor(ref self: ContractState, sumo_account_class_hash: felt252, public_key: felt252) {
+    /// - Delegation registry address (use 0 if not using DelegatedAccount / delegation).
+    /// - Admin address (e.g. deployer) allowed to call set_sponsor.
+    fn constructor(
+        ref self: ContractState,
+        sumo_account_class_hash: felt252,
+        public_key: felt252,
+        delegation_registry: ContractAddress,
+        admin_address: ContractAddress,
+    ) {
         self.public_key.write(public_key);
         self.sumo_account_class_hash.write(sumo_account_class_hash);
+        self.delegation_registry.write(delegation_registry);
+        self.sponsor_address.write(ZERO_ADDRESS.try_into().unwrap());
+        self.admin_address.write(admin_address);
         self.update_oauth_public_key();
     }
 
@@ -125,7 +178,7 @@ pub mod Login {
         ///
         /// User transactions can only call the Deploy/Login methods of this account while Admin transaction are 
         /// normal transaction with the exception that cannot call the Deploy/Login methods of this account.
-        fn __validate__(self: @ContractState, calls: Span<Call>) -> felt252 {
+        fn __validate__(self: @ContractState, calls: Array<Call>) -> felt252 {
             self.only_protocol();
             self.validate_tx_version();
 
@@ -147,7 +200,7 @@ pub mod Login {
                 self.validate_tx_admin_signature(r, s);
                 for call in calls {
                     //admin cannot call login/deploy selector with his key
-                    assert(!self.is_user_entrypoint(*call.selector), LoginErrors::SELECTOR_NOT_ALLOWED)
+                    assert(!self.is_user_entrypoint(call.selector), LoginErrors::SELECTOR_NOT_ALLOWED)
                 }
             } else {
                 assert(false, LoginErrors::INVALID_SIGNATURE_TYPE);
@@ -159,10 +212,10 @@ pub mod Login {
         ///
         /// - The transaction version must be greater than or equal to 1.
         /// - The function ins only accesible by the protocol.
-        fn __execute__(ref self: ContractState, mut calls: Span<Call>) -> Array<Span<felt252>> {
+        fn __execute__(ref self: ContractState, mut calls: Array<Call>) -> Array<Span<felt252>> {
             self.only_protocol();
             self.validate_tx_version();
-            execute_calls(calls)
+            execute_calls(calls.span())
         }
         
         /// Verifies if a given address is a sumo account deployed by this Login account.
@@ -214,6 +267,14 @@ pub mod Login {
                 ).unwrap_syscall();
             let precomputed_address = self.get_target_address(signature.address_seed);
             assert(precomputed_address == address, LoginErrors::PRECOMP_ADDRESS_FAIL);
+            let registry = self.delegation_registry.read();
+            if !registry.is_zero() {
+                syscalls::call_contract_syscall(
+                    address,
+                    selector!("set_registry"),
+                    array![registry.into()].span(),
+                ).unwrap_syscall();
+            }
             self.user_list.entry(address).write(true);
 
             let (eph_key_0,eph_key_1) = signature.eph_key;
@@ -285,6 +346,144 @@ pub mod Login {
                 self.emit( ModulusUptdated { modulus : new_key });
                 self.oauth_modulus_F.write(new_key)
             }
+        }
+
+        /// Admin-only: set sponsor address. Callable by admin_address (e.g. deployer).
+        fn set_sponsor(ref self: ContractState, sponsor: ContractAddress) {
+            let caller = get_caller_address();
+            let admin = self.admin_address.read();
+            assert(!admin.is_zero(), LoginErrors::ADMIN_NOT_SET);
+            assert(caller == admin, LoginErrors::NOT_SPONSOR);
+            self.sponsor_address.write(sponsor);
+        }
+
+        /// Sponsor-only: deploy account with proof as calldata (ashcrypto03-compatible flow).
+        fn deploy_account_sponsor(
+            ref self: ContractState,
+            proof: Array<felt252>,
+            eph_public_key0: u256,
+            eph_public_key1: u256,
+            address_seed: u256,
+            max_block: u256,
+            iss_b64_F: u256,
+            iss_index_in_payload_mod_4: u256,
+            header_F: u256,
+            modulus_F: u256,
+            session_pubkey: felt252,
+            session_expiry: u64,
+        ) -> ContractAddress {
+            let caller = get_caller_address();
+            let sponsor = self.sponsor_address.read();
+            assert(!sponsor.is_zero(), LoginErrors::SPONSOR_NOT_SET);
+            assert(caller == sponsor, LoginErrors::NOT_SPONSOR);
+
+            self.validate_block_time(max_block, get_block_number());
+            self.validate_oauth_modulus_F(modulus_F);
+
+            let all_inputs_hash_garaga = self.garaga_verify_get_public_inputs(proof.span());
+            assert(
+                validate_all_inputs_hash_from_params(
+                    eph_public_key0,
+                    eph_public_key1,
+                    address_seed,
+                    max_block,
+                    iss_b64_F,
+                    iss_index_in_payload_mod_4,
+                    header_F,
+                    modulus_F,
+                    all_inputs_hash_garaga,
+                ),
+                LoginErrors::INVALID_ALL_INPUTS_HASH,
+            );
+
+            let target_address = self.get_target_address(address_seed);
+            assert(!self.user_list.entry(target_address).read(), LoginErrors::IS_USER);
+
+            let class_hash: ClassHash = self.sumo_account_class_hash.read().try_into().unwrap();
+            let address_seed_masked = mask_address_seed(address_seed);
+            let (address, _) = syscalls::deploy_syscall(
+                class_hash,
+                address_seed_masked,
+                array![].span(),
+                core::bool::False,
+            )
+            .unwrap_syscall();
+
+            let precomputed_address = self.get_target_address(address_seed);
+            assert(precomputed_address == address, LoginErrors::PRECOMP_ADDRESS_FAIL);
+
+            let registry = self.delegation_registry.read();
+            if !registry.is_zero() {
+                syscalls::call_contract_syscall(
+                    address,
+                    selector!("set_registry"),
+                    array![registry.into()].span(),
+                )
+                .unwrap_syscall();
+            }
+
+            self.user_list.entry(address).write(true);
+
+            let two_128: u256 = TWO_POWER_128.try_into().unwrap();
+            let reconstructed_eph_key: felt252 =
+                (eph_public_key0 * two_128 + eph_public_key1).try_into().unwrap();
+            self.set_user_pkey(address, reconstructed_eph_key, session_expiry);
+            self.add_debt(address, DEPLOY_FEE_GAS);
+
+            self.emit(DeployAccount { address: address });
+            address
+        }
+
+        /// Sponsor-only: login/rotate key for existing user.
+        fn login_sponsor(
+            ref self: ContractState,
+            proof: Array<felt252>,
+            eph_public_key0: u256,
+            eph_public_key1: u256,
+            address_seed: u256,
+            max_block: u256,
+            iss_b64_F: u256,
+            iss_index_in_payload_mod_4: u256,
+            header_F: u256,
+            modulus_F: u256,
+            session_pubkey: felt252,
+            session_expiry: u64,
+        ) {
+            let caller = get_caller_address();
+            let sponsor = self.sponsor_address.read();
+            assert(!sponsor.is_zero(), LoginErrors::SPONSOR_NOT_SET);
+            assert(caller == sponsor, LoginErrors::NOT_SPONSOR);
+
+            self.validate_block_time(max_block, get_block_number());
+            self.validate_oauth_modulus_F(modulus_F);
+
+            let all_inputs_hash_garaga = self.garaga_verify_get_public_inputs(proof.span());
+            assert(
+                validate_all_inputs_hash_from_params(
+                    eph_public_key0,
+                    eph_public_key1,
+                    address_seed,
+                    max_block,
+                    iss_b64_F,
+                    iss_index_in_payload_mod_4,
+                    header_F,
+                    modulus_F,
+                    all_inputs_hash_garaga,
+                ),
+                LoginErrors::INVALID_ALL_INPUTS_HASH,
+            );
+
+            let target_address = self.get_target_address(address_seed);
+            assert(self.user_list.entry(target_address).read(), LoginErrors::NOT_USER);
+
+            let debt = self.user_debt.entry(target_address).read();
+            assert(debt == 0, LoginErrors::HAS_DEBT);
+
+            let two_128: u256 = TWO_POWER_128.try_into().unwrap();
+            let reconstructed_eph_key: felt252 =
+                (eph_public_key0 * two_128 + eph_public_key1).try_into().unwrap();
+            self.set_user_pkey(target_address, reconstructed_eph_key, session_expiry);
+            self.add_debt(target_address, LOGIN_FEE_GAS);
         }
     }
 
@@ -360,6 +559,7 @@ pub mod Login {
         }
 
         /// Verifies that the ZK proof is valid and recovers the public inputs bounded to the proof.
+        /// Uses manual deserialization to handle snforge 0.57 / library_call return format.
         fn garaga_verify_get_public_inputs(self: @ContractState, calldata: Span<felt252>) ->  Span<u256> {
             let mut _res = syscalls::library_call_syscall(
                 GARAGA_VERIFY_CLASSHASH.try_into().unwrap(),
@@ -367,9 +567,18 @@ pub mod Login {
                 calldata
             )
                 .unwrap_syscall();
-            let (verified, res) = Serde::<(bool, Span<u256>)>::deserialize(ref _res).unwrap();
+            let verified = *_res.at(0) != 0;
+            let n: u32 = (*_res.at(1)).try_into().unwrap();
+            let mut public_inputs = array![];
+            let mut idx = 2;
+            for _ in 0..n {
+                let low: u128 = (*_res.at(idx)).try_into().unwrap();
+                let high: u128 = (*_res.at(idx + 1)).try_into().unwrap();
+                public_inputs.append(u256 { low, high });
+                idx += 2;
+            }
             assert(verified, LoginErrors::INVALID_PROOF);
-            return res;
+            return public_inputs.span();
         }
 
         /// Verifies that the target of the call is this account
@@ -395,7 +604,17 @@ pub mod Login {
             self.validate_block_time(signature.max_block.into(),get_block_number());
             self.validate_oauth_modulus_F(signature.modulus_F);
 
-            let all_inputs_hash_garaga = self.garaga_verify_get_public_inputs(signature.garaga);
+            let mut proof_calldata = array![];
+            proof_calldata.append(signature.garaga.len().into());
+            let mut i: u32 = 0;
+            loop {
+                if i >= signature.garaga.len() {
+                    break ();
+                }
+                proof_calldata.append(*signature.garaga.at(i));
+                i += 1;
+            }
+            let all_inputs_hash_garaga = self.garaga_verify_get_public_inputs(proof_calldata.span());
             assert(validate_all_inputs_hash(@signature, all_inputs_hash_garaga), LoginErrors::INVALID_ALL_INPUTS_HASH);
 
             let target_address = self.get_target_address(signature.address_seed);

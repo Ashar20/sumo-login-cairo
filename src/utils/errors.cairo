@@ -16,6 +16,9 @@ pub mod LoginErrors {
     pub const OUTSIDE_CALL : felt252 = 'Login: outside call now allowed';
     pub const SELECTOR_NOT_ALLOWED : felt252 = 'Login: sellector not allowed';
     pub const PRECOMP_ADDRESS_FAIL : felt252 = 'Login: precomputed addres fail';
+    pub const NOT_SPONSOR : felt252 = 'Login: caller is not sponsor';
+    pub const SPONSOR_NOT_SET : felt252 = 'Login: sponsor not configured';
+    pub const ADMIN_NOT_SET : felt252 = 'Login: admin not set';
 }
 
 pub mod AccountErrors {
